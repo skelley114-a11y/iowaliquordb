@@ -3,6 +3,7 @@ import shutil
 import urllib.request, urllib.parse, urllib.error
 import re
 import csv
+import requests
 from bs4 import BeautifulSoup
 import sqlite3
 from datetime import datetime, timedelta
@@ -17,7 +18,7 @@ def regexp_extract(expr, item):
     if match:
         return item[match.end():].strip()
     return None
-connection.create_function("regexp_extract", 2, regexp_extract)
+
 def build_date_table(db_path, start_date, num_of_days):
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -86,7 +87,7 @@ with requests.get(url3, headers=header, stream=True) as r3:
 # connects to the database
 conn = sqlite3.connect('liquor_sales.db')
 cur = conn.cursor()
-
+conn.create_function("regexp_extract", 2, regexp_extract)
 # creates the tables and keys for the database
 cur.executescript('''
 PRAGMA foreign_keys=ON;
