@@ -37,7 +37,7 @@ def build_date_table(db_path, start_date, num_of_days):
     date_data = []
     for day in range(num_of_days):
         current = start_date + timedelta(days=day)
-        date_id = 0+day
+        date_id = int(current.strftime('%Y%m%d'))
         row = (
             date_id,
             current.strftime('%Y-%m-%d'),
@@ -48,7 +48,7 @@ def build_date_table(db_path, start_date, num_of_days):
             current.isocalendar()[1]
         )
         date_data.append(row)
-    cursor.executemany(
+    cur.executemany(
         "INSERT OR IGNORE INTO date VALUES (?,?,?,?,?,?,?)",date_data
     )
     conn.commit()
@@ -66,36 +66,33 @@ header= {
     'X-App-Token': 'fgL74Y5CAv1nz7oYbytGRgzli'
 }
 # connects to and downloads the necessary documents
-with requests.get(url, headers=header, stream=True) as r:
-    r.raise_for_status()
-    with open(local_filename, 'wb') as f:
-        for chunk in r.iter_content(chunk_size=1024):
-            f.write(chunk)
+# requests.get(url, headers=header, stream=True) as r:
+#    r.raise_for_status()
+#    with open(local_filename, 'wb') as f:
+#        for chunk in r.iter_content(chunk_size=1024):
+#            f.write(chunk)
 
-with requests.get(url2, headers=header, stream=True) as r2:
-    r2.raise_for_status()
-    with open(local_brands, 'wb') as f:
-        for chunk2 in r2.iter_content(chunk_size=1024):
-            f.write(chunk2)
+#with requests.get(url2, headers=header, stream=True) as r2:
+#    r2.raise_for_status()
+#    with open(local_brands, 'wb') as f:
+#        for chunk2 in r2.iter_content(chunk_size=1024):
+#            f.write(chunk2)
 
-with requests.get(url3, headers=header, stream=True) as r3:
-    r3.raise_for_status()
-    with open(local_franchise, 'wb') as f:
-        for chunk3 in r3.iter_content(chunk_size=1024):
-            f.write(chunk3)
+#with requests.get(url3, headers=header, stream=True) as r3:
+#    r3.raise_for_status()
+#    with open(local_franchise, 'wb') as f:
+#        for chunk3 in r3.iter_content(chunk_size=1024):
+#            f.write(chunk3)
 
 # connects to the database
 conn = sqlite3.connect('liquor_sales.db')
 cur = conn.cursor()
 conn.create_function("regexp_extract", 2, regexp_extract)
 # creates the tables and keys for the database
+build_date_table('liquor_sales.db', '2014-01-01', 365 * 12)
 cur.executescript('''
 PRAGMA foreign_keys=ON;
 
-CREATE TABLE IF NOT EXISTS date(
-    date_id INTEGER PRIMARY KEY NOT NULL,
-    date TEXT PRIMARY KEY NOT NULL
-);
 CREATE TABLE IF NOT EXISTS brand_info(
     brand_id INTEGER PRIMARY KEY NOT NULL,
     pattern TEXT UNIQUE NOT NULL,
@@ -114,7 +111,7 @@ CREATE TABLE IF NOT EXISTS zip_code(
     zip_code INTEGER UNIQUE NOT NULL
 );
 CREATE TABLE IF NOT EXISTS county_info(
-    county_number INTEGER NOT NULL,
+    county_num INTEGER UNIQUE NOT NULL,
     county_name TEXT UNIQUE NOT NULL
 );
 CREATE TABLE IF NOT EXISTS vendor_info(
@@ -123,7 +120,7 @@ CREATE TABLE IF NOT EXISTS vendor_info(
 );
 CREATE TABLE IF NOT EXISTS bottle_volume(
     bottle_volume_id INTEGER PRIMARY KEY NOT NULL,
-    bottle_volume_ml UNIQUE INTEGER NOT NULL
+    bottle_volume_ml INTEGER UNIQUE NOT NULL
 );
 CREATE TABLE IF NOT EXISTS flavor_promo(
     flavor_promo_id INTEGER PRIMARY KEY NOT NULL,
@@ -144,12 +141,12 @@ CREATE TABLE IF NOT EXISTS store_info(
     zip_code_id INTEGER NOT NULL,
     county_id INTEGER NOT NULL,
     FOREIGN KEY (franchise_id) REFERENCES franchise(franchise_id),
-    FOREIGN KEY (county_id) REFERENCES county_info(county_id),
+    FOREIGN KEY (county_id) REFERENCES county_info(county_num),
     FOREIGN KEY (city_id) REFERENCES city_name(city_id),
     FOREIGN KEY (zip_code_id) REFERENCES zip_code(zip_code_id)
 );
 CREATE TABLE IF NOT EXISTS sales_fact (
-    invoice INTEGER PRIMARY KEY UNIQUE NOT NULL,
+    invoice TEXT PRIMARY KEY UNIQUE NOT NULL,
     date INTEGER NOT NULL,
     store_number INTEGER NOT NULL,
     category INTEGER,
@@ -161,7 +158,7 @@ CREATE TABLE IF NOT EXISTS sales_fact (
     state_bottle_cost INTEGER NOT NULL,
     state_bottle_retail INTEGER NOT NULL,
     bottles_sold INTEGER NOT NULL,
-    FOREIGN KEY (date) REFERENCES date(date_id)
+    FOREIGN KEY (date) REFERENCES date(date_id),
     FOREIGN KEY (store_number) REFERENCES store_info(store_id),
     FOREIGN KEY (category) REFERENCES category_info(category_id),
     FOREIGN KEY (vendor_number) REFERENCES vendor_info(vendor_id),
@@ -187,8 +184,7 @@ with open(local_brands, "r") as brandname:
             cur.execute('''INSERT OR IGNORE INTO brand_info 
             (pattern, brand_name) VALUES (?,?)''',
                         (pattern, name))
-            cur.execute("SELECT brand_id FROM brand_info WHERE brand_name =?", (brandsclean,))
-            brand_id = cur.fetchone()[0]
+
 conn.commit()
 
 with open(local_franchise, "r") as franchises:
@@ -200,8 +196,6 @@ with open(local_franchise, "r") as franchises:
                 continue
             print(f'Processing: {cleanname}')
             cur.execute('''INSERT OR IGNORE INTO franchise (franchise_name) VALUES (?)''', (cleanname,))
-            cur.execute('''SELECT franchise_id FROM franchise WHERE franchise_name =?''', (cleanname,))
-            franchise_id = cur.fetchone()[0]
 
 conn.commit()
 # selects the columns from the previously made look-up tables in order to make the rest of the database
@@ -214,11 +208,15 @@ all_franchises = cur.fetchall()
 with open(local_filename, mode='r', encoding='utf-8') as csv_file:
     csv_reader = csv.DictReader(csv_file)
     for row in csv_reader:
+        raw_date = datetime.strptime(row['Date'], '%m/%d/%Y')
+        date_id = int(raw_date.strftime('%Y%m%d'))
         vendor_id = row["Vendor Number"]
         store_id = row["Store Number"]
         county_id = row["County Number"]
         description = row["Item Description"]
         found_brand_id = None
+        found_franchise_id = 0
+        extracted_store = row["Store Name"]
         flavor_name = description
 
         for brand_id, brand_name, pattern in brand_patterns:
@@ -231,51 +229,75 @@ with open(local_filename, mode='r', encoding='utf-8') as csv_file:
         cur.execute("INSERT OR IGNORE INTO flavor_promo (flavor_promo_name, brand_id) VALUES (?,?)", (extracted_flavor, found_brand_id))
         cur.execute("SELECT flavor_promo_id FROM flavor_promo WHERE flavor_promo_name =?", (extracted_flavor,))
         flavor_promo_id = cur.fetchone()[0]
-        conn.commit()
         print("Promo flavor table done!")
 
-        cur.execute("INSERT OR IGNORE INTO city_name (city_name) VALUES (?)", (row["City"]))
-        cur.execute("SELECT city_id FROM city_name WHERE city_name =?", (row["City"]))
+        cur.execute("INSERT OR IGNORE INTO category_info (category_name) VALUES (?)", (row["Category Name"],))
+        cur.execute("SELECT category_id FROM category_info WHERE category_name =?", (row["Category Name"],))
+        category_id = cur.fetchone()[0]
+
+        cur.execute("INSERT OR IGNORE INTO city_name (city_name) VALUES (?)", (row["City"],))
+        cur.execute("SELECT city_id FROM city_name WHERE city_name =?", (row["City"],))
         city_id = cur.fetchone()[0]
-        conn.commit()
         print("City name table done!")
 
-        cur.execute("INSERT OR IGNORE INTO zip_code (zip_code_id) VALUES (?)", (row["Zip Code"]))
-        cur.execute("SELECT zip_code_id FROM zip_code WHERE zip_code_id =?", (row["Zip Code"]))
-        zip_id = cur.fetchone()[0]
-        conn.commit()
+        cur.execute("INSERT OR IGNORE INTO zip_code (zip_code) VALUES (?)", (row["Zip Code"],))
+        cur.execute("SELECT zip_code_id FROM zip_code WHERE zip_code =?", (row["Zip Code"],))
+        zip_code_id = cur.fetchone()[0]
         print("Zip code table done!")
 
         cur.execute("INSERT OR IGNORE INTO vendor_info (vendor_id, vendor_name) VALUES (?,?)", (vendor_id, row["Vendor Name"]))
-        conn.commit()
         print("Vendor info table done!")
 
-        cur.execute("INSERT OR IGNORE INTO county_info (county_id, county_name) VALUES (?, ?)", (county_id, row["County Name"]))
-        conn.commit()
+        cur.execute("INSERT OR IGNORE INTO county_info (county_num, county_name) VALUES (?, ?)", (county_id, row["County"]))
         print("County info table done!")
 
-        cur.execute("INSERT OR IGNORE INTO bottle_volume (bottle_volume_ml) VALUES (?)", (row["Bottle Volume (ml)"]))
-        cur.execute("SELECT bottle_volume_ml FROM bottle_volume WHERE bottle_volume_ml =?", (row["Bottle Volume (ml)"]))
-        bottle_volume_ml = cur.fetchone()[0]
-        conn.commit()
+        cur.execute("INSERT OR IGNORE INTO bottle_volume (bottle_volume_ml) VALUES (?)", (row["Bottle Volume (ml)"],))
+        cur.execute("SELECT bottle_volume_id FROM bottle_volume WHERE bottle_volume_ml =?", (row["Bottle Volume (ml)"],))
+        bottle_volume_id = cur.fetchone()[0]
         print("Bottle volume ml table done!")
 
         for franchise_id, franchise_name in all_franchises:
-            if re.search(franchise_id, row["Franchise Name"]):
+            if re.search(franchise_name, row["Store Name"]):
                 found_franchise_id = franchise_id
-                extracted_store= re.sub(franchise_id, "", row["Franchise Name"]).strip()
+                extracted_store= re.sub(franchise_name, "", row["Store Name"]).strip()
                 break
             if found_franchise_id is None:
                 continue
+        check_tables = [
+            ("date", "date_id", date_id),
+            ("store_info", "store_id", store_id),
+            ("category_info", "category_id", category_id),
+            ("vendor_info", "vendor_id", vendor_id),
+            ("brand_info", "brand_id", found_brand_id),
+            ("flavor_promo", "flavor_promo_id", flavor_promo_id)
+        ]
+
+        for table, col, val in check_tables:
+            cur.execute(f"SELECT 1 FROM {table} WHERE {col} = ?", (val,))
+            if not cur.fetchone():
+                print(f"FOREIGN KEY ERROR: ID {val} not found in {table}!")
 
         cur.execute("INSERT OR IGNORE INTO store_info (store_id, franchise_id, store_name, store_address, city_id, zip_code_id, county_id) VALUES (?,?,?,?,?,?,?)",
-                    (row['Store Number'], found_franchise_id, extracted_store, row['Store Address'], city_id, zip_code_id, county_id))
-        conn.commit()
+                    (row['Store Number'], found_franchise_id, extracted_store, row['Address'], city_id, zip_code_id, county_id))
         print("Store info table done!")
 
+        check_tables = [
+            ("date", "date_id", date_id),
+            ("store_info", "store_id", store_id),
+            ("category_info", "category_id", category_id),
+            ("vendor_info", "vendor_id", vendor_id),
+            ("brand_info", "brand_id", found_brand_id),
+            ("flavor_promo", "flavor_promo_id", flavor_promo_id)
+        ]
+
+        for table, col, val in check_tables:
+            cur.execute(f"SELECT 1 FROM {table} WHERE {col} = ?", (val,))
+            if not cur.fetchone():
+                print(f"FOREIGN KEY ERROR: ID {val} not found in {table}!")
+
         cur.execute("INSERT OR IGNORE INTO sales_fact (invoice, date, store_number, category, vendor_number, brand, flavor, pack, bottle_volume_ml, state_bottle_cost, state_bottle_retail, bottles_sold) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (row['Invoice/Item Number'], date_id, store_id, category_id, vendor_id, found_brand_id, flavor_promo_id, row[Pack], bottle_volume_id, row['State Bottle Cost'], row['State Bottle Retail'], row['Bottles Sold']))
-        conn.commit()
+                    (row['Invoice/Item Number'], date_id, store_id, category_id, vendor_id, found_brand_id, flavor_promo_id, row['Pack'], bottle_volume_id, row['State Bottle Cost'], row['State Bottle Retail'], row['Bottles Sold']))
         print("Invoice table done!")
+conn.commit()
 conn.close()
 print('The database is now ready for you to begin your analysis!!!')
